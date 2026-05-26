@@ -145,12 +145,10 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # NEW CONTROL WIDGET: DYNAMIC STOCK ALERT SLIDER THRESHOLD
     st.markdown("---")
     st.markdown("### 🚨 Logistical Alerts Panel")
     alert_threshold = st.slider("Stock Alert Warning Threshold", min_value=5, max_value=50, value=15)
 
-    # MARKET CURRENCY SELECTION ENGINE
     st.markdown("---")
     st.markdown("### 🌐 Market Currency Engine")
     selected_currency = st.selectbox("Select Display Currency", ["INR (₹)", "USD ($)", "EUR (€)"])
@@ -158,12 +156,24 @@ with st.sidebar:
     currency_rates = {"INR (₹)": (1.0, "₹"), "USD ($)": (0.012, "$"), "EUR (€)": (0.011, "€")}
     exchange_rate, currency_symbol = currency_rates[selected_currency]
 
-    # ➕ ADD PRODUCT FORM
+    # ➕ ADD PRODUCT FORM WITH INTEGRATED AUTO-MARKUP PRICING
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
-    new_price = st.number_input("Selling Price (INR)", min_value=1.0, value=999.0)
     new_cost = st.number_input("Wholesale Cost Price (INR)", min_value=0.0, value=600.0)
+    
+    # NEW INTERACTIVE WIDGET: AUTOMATED SMART MARKUP SELECTOR
+    enable_markup = st.checkbox("Enable Automated Smart Markup Pricing", value=False)
+    
+    if enable_markup:
+        markup_percent = st.slider("Target Profit Margin Markup (%)", min_value=10, max_value=150, value=40)
+        # Automatic formula calculation logic
+        calculated_selling_price = new_cost * (1 + (markup_percent / 100))
+        st.info(f"💡 Calculated Selling Price: INR {calculated_selling_price:,.2f} ({markup_percent}% Markup applied)")
+        new_price = calculated_selling_price
+    else:
+        new_price = st.number_input("Selling Price (INR)", min_value=1.0, value=999.0)
+        
     new_stock = st.number_input("Initial Stock Level", min_value=0, value=10)
     new_rating = st.slider("Product Rating", min_value=1.0, max_value=5.0, value=4.0)
     new_supplier = st.selectbox("Assign Supplier Partner", ["NexGen Electronics Ltd", "Alpha Supply Chain", "WearableTech Distributors", "Global Logistics Corp"])
@@ -180,7 +190,7 @@ with st.sidebar:
             )
             conn.commit()
             conn.close()
-            st.success(f"Successfully added {new_name}!")
+            st.success(f"Successfully added {new_name} at optimized profit pricing parameters!")
             st.rerun()
 
     # 🗑️ REMOVE SKU FORM
@@ -241,7 +251,7 @@ if not raw_inventory_df.empty:
     raw_inventory_df.loc[raw_inventory_df['cost_price'] == 0, 'cost_price'] = raw_inventory_df['price'] * 0.65
 
 # ==============================================================================
-# 🚨 EMERGENCY ALERT BLOCK SYSTEM (UPDATED TO USE DYNAMIC THRESHOLD)
+# 🚨 EMERGENCY ALERT BLOCK SYSTEM
 # ==============================================================================
 critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < alert_threshold] if not raw_inventory_df.empty else pd.DataFrame()
 if not critical_alert_items.empty:
@@ -342,7 +352,7 @@ else:
         st.dataframe(
             po_df[['name', 'supplier_name', 'Display Cost', 'Reorder Quantity', 'Estimated Cost']].style.format({
                 'Display Cost': f'{currency_symbol}' + '{:.2f}', 
-                'Estimated Cost': f'{currency_symbol}' + f'{currency_symbol}' + '{:.2f}'
+                'Estimated Cost': f'{currency_symbol}' + '{:.2f}'
             }),
             use_container_width=True
         )
