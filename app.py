@@ -67,13 +67,12 @@ def init_db():
         )
     ''')
     
-    # Dynamic Safe Migration Check: If cost_price column doesn't exist from older sessions, add it
+    # Dynamic Safe Migration Check
     try:
         cursor.execute("SELECT cost_price FROM products LIMIT 1")
     except sqlite3.OperationalError:
         logging.info("Migrating database schema to include cost_price vector.")
         cursor.execute("ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0.0")
-        # Update baseline seed records with a standard cost model calculation
         cursor.execute("UPDATE products SET cost_price = price * 0.65")
     
     # 2. Create Standalone Categories Table
@@ -139,7 +138,7 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # ➕ UPGRADED FORM: ADD PRODUCT WITH COST PRICE
+    # ➕ ADD PRODUCT FORM
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
@@ -151,21 +150,19 @@ with st.sidebar:
     if st.button("Save Product to Database"):
         if new_name.strip() == "":
             st.error("Product name cannot be empty!")
-        elif new_cost > new_price:
-            st.warning("Warning: Cost price exceeds Selling price! (Negative margins)")
-            
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO products (name, price, cost_price, stock_level, popularity_score) VALUES (?, ?, ?, ?, ?)",
-            (new_name, new_price, new_cost, new_stock, new_rating)
-        )
-        conn.commit()
-        conn.close()
-        st.success(f"Successfully added {new_name}!")
-        st.rerun()
+        else:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO products (name, price, cost_price, stock_level, popularity_score) VALUES (?, ?, ?, ?, ?)",
+                (new_name, new_price, new_cost, new_stock, new_rating)
+            )
+            conn.commit()
+            conn.close()
+            st.success(f"Successfully added {new_name}!")
+            st.rerun()
 
-    # 🗑️ REMOVE SKU FROM SIDEBAR
+    # 🗑️ REMOVE SKU FORM
     st.markdown("---")
     st.markdown("### 🗑️ Remove SKU from Ecosystem")
     delete_conn = get_db_connection()
@@ -218,8 +215,8 @@ conn.close()
 if selected_category != "All Categories":
     raw_inventory_df = raw_inventory_df[raw_inventory_df['associated_categories'].str.contains(selected_category, na=False)]
 
-# Make sure baseline costs aren't zero to avoid mathematical division errors
-raw_inventory_df['cost_price'] = raw_inventory_df['cost_price'].replace(0, raw_inventory_df['price'] * 0.6)
+# FIXED EXPLICIT PANDAS OPERATION FOR ZERO-VALUES
+raw_inventory_df.loc[raw_inventory_df['cost_price'] == 0, 'cost_price'] = raw_inventory_df['price'] * 0.65
 
 # ==============================================================================
 # 🚨 EMERGENCY ALERT BLOCK SYSTEM
@@ -235,18 +232,15 @@ if not critical_alert_items.empty:
 if raw_inventory_df.empty:
     st.warning("⚠️ Zero SKU allocations match the targeted parameters inside the warehouse engine layer.")
 else:
-    # Math engines computing Revenue, Margins, and Projected Profit
     total_unique_skus = len(raw_inventory_df)
     total_warehouse_valuation = (raw_inventory_df['price'] * raw_inventory_df['stock_level']).sum()
     
-    # Calculate total potential profit across your whole warehouse inventory
+    # Calculate potential profit margins safely
     raw_inventory_df['item_profit'] = raw_inventory_df['price'] - raw_inventory_df['cost_price']
     total_projected_profit = (raw_inventory_df['item_profit'] * raw_inventory_df['stock_level']).sum()
-    
-    # Add Margin percentage columns dynamically to the active visible dataset frames
     raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
     
-    # Display updated core performance scorecards
+    # Scorecards
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Gross Pipeline Valuation", f"₹{total_warehouse_valuation:,.2f}")
     metric_col2.metric("Projected Operational Profit", f"₹{total_projected_profit:,.2f}", delta="📈 NET")
@@ -254,7 +248,7 @@ else:
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # 📊 Dynamic Chart tracking profit margins across items
+    # Bar Chart tracking profit margins
     st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
     chart_data = raw_inventory_df[['name', 'Profit Margin (%)']].set_index('name')
     st.bar_chart(chart_data, y="Profit Margin (%)")
@@ -262,7 +256,6 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
     
-    # Clean up tracking view layout allocations before table rendering
     display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'associated_categories']]
     st.dataframe(
         display_df.style.apply(highlight_low_stock, axis=1).format({
@@ -273,7 +266,7 @@ else:
         use_container_width=True
     )
 
-    # 💾 Corporate Spreadsheet CSV Data Exporter Downstream
+    # Spreadsheet Export
     st.markdown("---")
     st.markdown("### 📥 Administrative Data Export Operations")
     
