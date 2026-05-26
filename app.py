@@ -129,8 +129,8 @@ categories_df = pd.read_sql_query("SELECT category_name FROM categories", conn)
 category_options = ["All Categories"] + categories_df['category_name'].tolist()
 conn.close()
 
-def highlight_low_stock(row):
-    return ['background-color: #5c4d12;' if row['stock_level'] < 15 else '' for _ in row]
+def highlight_low_stock(row, threshold):
+    return ['background-color: #5c4d12;' if row['stock_level'] < threshold else '' for _ in row]
 
 # ==============================================================================
 # 🖥️ VISUAL INTERFACE LAYOUT & SIDEBAR CONTROL PANELS
@@ -145,12 +145,16 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # 🌐 NEW WIDGET: GLOBAL MULTI-CURRENCY SWITCHER
+    # NEW CONTROL WIDGET: DYNAMIC STOCK ALERT SLIDER THRESHOLD
+    st.markdown("---")
+    st.markdown("### 🚨 Logistical Alerts Panel")
+    alert_threshold = st.slider("Stock Alert Warning Threshold", min_value=5, max_value=50, value=15)
+
+    # MARKET CURRENCY SELECTION ENGINE
     st.markdown("---")
     st.markdown("### 🌐 Market Currency Engine")
     selected_currency = st.selectbox("Select Display Currency", ["INR (₹)", "USD ($)", "EUR (€)"])
 
-    # Map conversion multipliers (Baseline reference is always INR)
     currency_rates = {"INR (₹)": (1.0, "₹"), "USD ($)": (0.012, "$"), "EUR (€)": (0.011, "€")}
     exchange_rate, currency_symbol = currency_rates[selected_currency]
 
@@ -237,12 +241,12 @@ if not raw_inventory_df.empty:
     raw_inventory_df.loc[raw_inventory_df['cost_price'] == 0, 'cost_price'] = raw_inventory_df['price'] * 0.65
 
 # ==============================================================================
-# 🚨 EMERGENCY ALERT BLOCK SYSTEM
+# 🚨 EMERGENCY ALERT BLOCK SYSTEM (UPDATED TO USE DYNAMIC THRESHOLD)
 # ==============================================================================
-critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < 10] if not raw_inventory_df.empty else pd.DataFrame()
+critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < alert_threshold] if not raw_inventory_df.empty else pd.DataFrame()
 if not critical_alert_items.empty:
     for _, row in critical_alert_items.iterrows():
-        st.error(f"🚨 **CRITICAL STOCK SHORTAGE ALERT**: '{row['name']}' is running dangerously low! Only **{row['stock_level']} units** left.")
+        st.error(f"🚨 **LOGISTICAL ALERT**: '{row['name']}' has fallen below your warning ceiling! Current Stock: **{row['stock_level']} units** (Limit: {alert_threshold}).")
 
 # ==============================================================================
 # 📊 PRESENTATION LAYER: KPI TILES, CHARTS, AND DATAFRAMES
@@ -250,7 +254,6 @@ if not critical_alert_items.empty:
 if raw_inventory_df.empty:
     st.warning("⚠️ Zero SKU allocations match the targeted parameters inside the warehouse engine layer.")
 else:
-    # Perform currency transformation multiplication on variables
     converted_price = raw_inventory_df['price'] * exchange_rate
     converted_cost = raw_inventory_df['cost_price'] * exchange_rate
     
@@ -262,11 +265,10 @@ else:
     total_projected_profit = (converted_profit * raw_inventory_df['stock_level']).sum()
     raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
     
-    # Apply changes to local dataframe for screen display rendering
     raw_inventory_df['Display Price'] = converted_price
     raw_inventory_df['Display Cost'] = converted_cost
 
-    # Scorecards
+    # Scorecard layout rows
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Gross Pipeline Valuation", f"{currency_symbol}{total_warehouse_valuation:,.2f}")
     metric_col2.metric("Projected Operational Profit", f"{currency_symbol}{total_projected_profit:,.2f}", delta="📈 NET")
@@ -285,10 +287,11 @@ else:
         st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
         
         display_df = raw_inventory_df[['product_id', 'name', 'Display Price', 'Display Cost', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
+        
         st.dataframe(
-            display_df.style.apply(highlight_low_stock, axis=1).format({
-                'Display Price': f'{currency_symbol}' + '{:.2f}', 
-                'Display Cost': f'{currency_symbol}' + '{:.2f}', 
+            display_df.style.apply(highlight_low_stock, threshold=alert_threshold, axis=1).format({
+                'Display Price': f'{currency_symbol}' + '{:.2f}',
+                'Display Cost': f'{currency_symbol}' + '{:.2f}',
                 'Profit Margin (%)': '{:.1f}%'
             }),
             use_container_width=True
@@ -322,12 +325,14 @@ else:
             use_container_width=True
         )
 
-    # Procurement Reorder Module
+# ==============================================================================
+# 🤖 AUTOMATED PROCUREMENT REORDER ENGINE
+# ==============================================================================
     st.markdown("---")
     st.markdown("### 🤖 Automated Procurement Reorder Engine")
     
     if not critical_alert_items.empty:
-        st.write("The system has auto-generated a purchase order draft to restore optimal stock numbers (+50 units):")
+        st.write(f"The system has auto-generated a purchase order draft to restore items below {alert_threshold} units:")
         
         po_df = critical_alert_items[['name', 'supplier_name', 'cost_price']].copy()
         po_df['Display Cost'] = po_df['cost_price'] * exchange_rate
@@ -337,7 +342,7 @@ else:
         st.dataframe(
             po_df[['name', 'supplier_name', 'Display Cost', 'Reorder Quantity', 'Estimated Cost']].style.format({
                 'Display Cost': f'{currency_symbol}' + '{:.2f}', 
-                'Estimated Cost': f'{currency_symbol}' + '{:.2f}'
+                'Estimated Cost': f'{currency_symbol}' + f'{currency_symbol}' + '{:.2f}'
             }),
             use_container_width=True
         )
