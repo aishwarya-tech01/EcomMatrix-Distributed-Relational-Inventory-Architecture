@@ -145,6 +145,15 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
+    # 🌐 NEW WIDGET: GLOBAL MULTI-CURRENCY SWITCHER
+    st.markdown("---")
+    st.markdown("### 🌐 Market Currency Engine")
+    selected_currency = st.selectbox("Select Display Currency", ["INR (₹)", "USD ($)", "EUR (€)"])
+
+    # Map conversion multipliers (Baseline reference is always INR)
+    currency_rates = {"INR (₹)": (1.0, "₹"), "USD ($)": (0.012, "$"), "EUR (€)": (0.011, "€")}
+    exchange_rate, currency_symbol = currency_rates[selected_currency]
+
     # ➕ ADD PRODUCT FORM
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
@@ -241,22 +250,30 @@ if not critical_alert_items.empty:
 if raw_inventory_df.empty:
     st.warning("⚠️ Zero SKU allocations match the targeted parameters inside the warehouse engine layer.")
 else:
+    # Perform currency transformation multiplication on variables
+    converted_price = raw_inventory_df['price'] * exchange_rate
+    converted_cost = raw_inventory_df['cost_price'] * exchange_rate
+    
     total_unique_skus = len(raw_inventory_df)
-    total_warehouse_valuation = (raw_inventory_df['price'] * raw_inventory_df['stock_level']).sum()
+    total_warehouse_valuation = (converted_price * raw_inventory_df['stock_level']).sum()
     
     raw_inventory_df['item_profit'] = raw_inventory_df['price'] - raw_inventory_df['cost_price']
-    total_projected_profit = (raw_inventory_df['item_profit'] * raw_inventory_df['stock_level']).sum()
+    converted_profit = raw_inventory_df['item_profit'] * exchange_rate
+    total_projected_profit = (converted_profit * raw_inventory_df['stock_level']).sum()
     raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
     
+    # Apply changes to local dataframe for screen display rendering
+    raw_inventory_df['Display Price'] = converted_price
+    raw_inventory_df['Display Cost'] = converted_cost
+
     # Scorecards
     metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("Gross Pipeline Valuation", f"₹{total_warehouse_valuation:,.2f}")
-    metric_col2.metric("Projected Operational Profit", f"₹{total_projected_profit:,.2f}", delta="📈 NET")
+    metric_col1.metric("Gross Pipeline Valuation", f"{currency_symbol}{total_warehouse_valuation:,.2f}")
+    metric_col2.metric("Projected Operational Profit", f"{currency_symbol}{total_projected_profit:,.2f}", delta="📈 NET")
     metric_col3.metric("Monitored Warehouse SKUs", f"{total_unique_skus} Active Handles")
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Main Tabs Layout to split Product view from Supplier Insights
     tab1, tab2 = st.tabs(["📊 Inventory Products View", "🏭 Supplier Performance Analytics"])
     
     with tab1:
@@ -267,24 +284,20 @@ else:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
         
-        display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
+        display_df = raw_inventory_df[['product_id', 'name', 'Display Price', 'Display Cost', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
         st.dataframe(
             display_df.style.apply(highlight_low_stock, axis=1).format({
-                'price': '₹{:.2f}', 
-                'cost_price': '₹{:.2f}', 
+                'Display Price': f'{currency_symbol}' + '{:.2f}', 
+                'Display Cost': f'{currency_symbol}' + '{:.2f}', 
                 'Profit Margin (%)': '{:.1f}%'
             }),
             use_container_width=True
         )
 
-    # ==============================================================================
-    # 🤖 NEW FEATURE ADDED: SUPPLIER PERFORMANCE & LEAD TIME ANALYTICS
-    # ==============================================================================
     with tab2:
         st.markdown("#### 🏭 Strategic Vendor Matrix Metrics")
         
-        # Group and calculate aggregate values for each supplier
-        raw_inventory_df['Stock Valuation'] = raw_inventory_df['price'] * raw_inventory_df['stock_level']
+        raw_inventory_df['Stock Valuation'] = raw_inventory_df['Display Price'] * raw_inventory_df['stock_level']
         
         supplier_summary = raw_inventory_df.groupby('supplier_name').agg(
             Total_SKUs=('product_id', 'count'),
@@ -292,7 +305,6 @@ else:
             Financial_Exposure=('Stock Valuation', 'sum')
         ).reset_index()
         
-        # Add a simulated logistical lead-time baseline to map real business wait-times
         lead_time_map = {
             'NexGen Electronics Ltd': '3 Days (Express)',
             'Alpha Supply Chain': '7 Days (Standard)',
@@ -301,14 +313,12 @@ else:
         }
         supplier_summary['Logistical Lead Time'] = supplier_summary['supplier_name'].map(lead_time_map).fillna('6 Days')
         
-        # Render a pie chart showing which supplier holds the most inventory financial weight
         st.markdown("##### 📈 Supplier Share Contribution (By Asset Value)")
         pie_chart_data = supplier_summary[['supplier_name', 'Financial_Exposure']].set_index('supplier_name')
         st.bar_chart(pie_chart_data, y="Financial_Exposure")
         
-        # Render the summary data block
         st.dataframe(
-            supplier_summary.style.format({'Financial_Exposure': '₹{:,.2f}'}),
+            supplier_summary.style.format({'Financial_Exposure': f'{currency_symbol}' + '{:,.2f}'}),
             use_container_width=True
         )
 
@@ -320,11 +330,15 @@ else:
         st.write("The system has auto-generated a purchase order draft to restore optimal stock numbers (+50 units):")
         
         po_df = critical_alert_items[['name', 'supplier_name', 'cost_price']].copy()
+        po_df['Display Cost'] = po_df['cost_price'] * exchange_rate
         po_df['Reorder Quantity'] = 50
-        po_df['Estimated Cost (INR)'] = po_df['cost_price'] * po_df['Reorder Quantity']
+        po_df['Estimated Cost'] = po_df['Display Cost'] * po_df['Reorder Quantity']
         
         st.dataframe(
-            po_df.style.format({'cost_price': '₹{:.2f}', 'Estimated Cost (INR)': '₹{:.2f}'}),
+            po_df[['name', 'supplier_name', 'Display Cost', 'Reorder Quantity', 'Estimated Cost']].style.format({
+                'Display Cost': f'{currency_symbol}' + '{:.2f}', 
+                'Estimated Cost': f'{currency_symbol}' + '{:.2f}'
+            }),
             use_container_width=True
         )
         
