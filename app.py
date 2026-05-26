@@ -1,4 +1,3 @@
-
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -19,24 +18,36 @@ logging.basicConfig(
 # ==============================================================================
 st.set_page_config(page_title="EcomMatrix Pipeline", page_icon="📦", layout="wide")
 
+# Custom CSS injection matching your exact UI theme color preferences
 st.markdown("""
 <style>
+    /* 1. Global Page Background (Dark Theme) */
     .main, .block-container { 
         background-color: #0d1117 !important; 
     }
+    
+    /* 2. Change Sidebar Background to exactly #333333 */
     [data-testid="stSidebar"] {
         background-color: #333333 !important;
     }
+    
+    /* 3. Force ALL text elements inside the sidebar to be #ffffff (White) */
     [data-testid="stSidebar"] * {
         color: #ffffff !important;
     }
+    
+    /* 4. Ensure input widgets inside sidebar maintain bold white labels */
     div[data-testid="stWidgetLabel"] p, label p {
         color: #ffffff !important;
         font-weight: 600 !important;
     }
+    
+    /* 5. Main page headings and standard text color set to #ffffff */
     h1, h2, h3, h4, p, span, label { 
         color: #ffffff !important; 
     }
+    
+    /* 6. Styling for top metric tiles */
     div[data-testid="stMetric"] {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -56,6 +67,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # 1. Create Master Products Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +78,7 @@ def init_db():
         )
     ''')
     
+    # 2. Create Standalone Categories Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             category_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +86,7 @@ def init_db():
         )
     ''')
     
+    # 3. Create Many-to-Many Bridge Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS product_category_map (
             product_id INTEGER,
@@ -83,6 +97,7 @@ def init_db():
         )
     ''')
     
+    # Seed initial rows if database engine is empty
     cursor.execute("SELECT COUNT(*) FROM products")
     if cursor.fetchone()[0] == 0:
         products_seed = [
@@ -103,18 +118,21 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Start database
 init_db()
 
+# Pre-fetch list of active categories for the dropdown selectors
 conn = get_db_connection()
 categories_df = pd.read_sql_query("SELECT category_name FROM categories", conn)
 category_options = ["All Categories"] + categories_df['category_name'].tolist()
 conn.close()
 
+# Row color helper logic for low stock tracking
 def highlight_low_stock(row):
     return ['background-color: #5c4d12;' if row['stock_level'] < 15 else '' for _ in row]
 
 # ==============================================================================
-# 🖥️ VISUAL INTERFACE LAYOUT & MANAGEMENT CONTROL PANEL (SIDEBAR)
+# 🖥️ VISUAL INTERFACE LAYOUT & SIDEBAR CONTROL PANELS
 # ==============================================================================
 st.title("📦 EcomMatrix™: Distributed Relational Inventory Architecture")
 st.markdown("---")
@@ -126,7 +144,7 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # ➕ ADD NEW SKU FORM
+    # ➕ RESTORED FEATURE: ADD NEW SKU TRANSACTION DATA FORM
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
@@ -150,7 +168,7 @@ with st.sidebar:
             st.success(f"Successfully added {new_name}!")
             st.rerun()
 
-    # 🗑️ TRANSACTIONAL DELETE FORM
+    # 🗑️ RESTORED FEATURE: TRANSACTIONAL DELETE SKUS FROM SIDEBAR
     st.markdown("---")
     st.markdown("### 🗑️ Remove SKU from Ecosystem")
     delete_conn = get_db_connection()
@@ -171,9 +189,11 @@ with st.sidebar:
             logging.info(f"Deleted tracking entity index ID: {selected_delete_id}")
             st.success("Database records successfully purged!")
             st.rerun()
+    else:
+        st.info("No records present to delete.")
 
 # ==============================================================================
-# ⚙️ INTERACTIVE BACKEND DATA QUERIES (SQL RELATIONAL JOIN ENGINE)
+# ⚙️ DATA PIPELINE ENGINE (SQL RELATIONAL JOIN)
 # ==============================================================================
 base_sql_query = """
     SELECT 
@@ -204,17 +224,16 @@ if selected_category != "All Categories":
     raw_inventory_df = raw_inventory_df[raw_inventory_df['associated_categories'].str.contains(selected_category, na=False)]
 
 # ==============================================================================
-# 🚨 NEW FEATURE ADDED: EMERGENCY STOCK ALERT LOGIC BLOCK
+# 🚨 EMERGENCY ALERT BLOCK SYSTEM
 # ==============================================================================
-# Checks if any item in our workspace inventory database has dropped below 10 items
 critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < 10]
 
 if not critical_alert_items.empty:
     for _, row in critical_alert_items.iterrows():
-        st.error(f"🚨 **CRITICAL STOCK SHORTAGE ALERT**: '{row['name']}' is running dangerously low! Only **{row['stock_level']} units** left in stock.")
+        st.error(f"🚨 **CRITICAL STOCK SHORTAGE ALERT**: '{row['name']}' is running dangerously low! Only **{row['stock_level']} units** left.")
 
 # ==============================================================================
-# 📊 MAIN DISPLAY PRESENTATION LAYER
+# 📊 PRESENTATION LAYER: KPI TILES, CHARTS, AND DATAFRAMES
 # ==============================================================================
 if raw_inventory_df.empty:
     st.warning("⚠️ Zero SKU allocations match the targeted parameters inside the warehouse engine layer.")
@@ -223,6 +242,7 @@ else:
     total_warehouse_valuation = (raw_inventory_df['price'] * raw_inventory_df['stock_level']).sum()
     critical_stockouts = len(raw_inventory_df[raw_inventory_df['stock_level'] == 0])
     
+    # Display scorecard rows
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Monitored Warehouse SKUs", f"{total_unique_skus} Active Units")
     metric_col2.metric("Total Asset Inventory Value", f"₹{total_warehouse_valuation:,.2f}")
@@ -234,7 +254,7 @@ else:
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Dynamic Data Visualization Layer Chart
+    # 📈 RESTORED FEATURE: Dynamic Analytics Bar Chart 
     st.markdown("#### 📊 Current Warehouse Stock Level Distribution")
     chart_data = raw_inventory_df[['name', 'stock_level']].set_index('name')
     st.bar_chart(chart_data, y="stock_level")
@@ -242,12 +262,13 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
     
+    # Core Data Grid View Matrix
     st.dataframe(
         raw_inventory_df.style.apply(highlight_low_stock, axis=1).format({'price': '₹{:.2f}', 'popularity_score': '{:.1f} ★'}),
         use_container_width=True
     )
 
-    # Corporate CSV Spreadsheet Exporter
+    # 💾 RESTORED FEATURE: Corporate Spreadsheet CSV Data Exporter Downstream
     st.markdown("---")
     st.markdown("### 📥 Administrative Data Export Operations")
     
