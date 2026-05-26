@@ -124,6 +124,33 @@ def init_db():
 
 init_db()
 
+# ==============================================================================
+# 🔒 SECURITY LAYER: USER AUTHENTICATION
+# ==============================================================================
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    st.markdown("## 🔒 EcomMatrix™ Administrative Security Gateway")
+    st.markdown("Please verify your infrastructure system access credentials below:")
+    
+    login_col1, login_col2 = st.columns(2)
+    with login_col1:
+        input_user = st.text_input("User Core Handle ID")
+        input_pass = st.text_input("Security Passphrase Key", type="password")
+        
+        if st.button("Authenticate System Initialization", type="primary"):
+            if input_user == "admin" and input_pass == "matrix99":
+                st.session_state["authenticated"] = True
+                st.success("Verification confirmed. Accessing system database framework layers...")
+                st.rerun()
+            else:
+                st.error("Access Denied: Invalid handle combination match or unauthorized profile footprint.")
+    st.stop()
+
+# ==============================================================================
+# 📊 CORE APP WORKSPACE (EXPOSED ONLY POST AUTHENTICATION)
+# ==============================================================================
 conn = get_db_connection()
 categories_df = pd.read_sql_query("SELECT category_name FROM categories", conn)
 category_options = ["All Categories"] + categories_df['category_name'].tolist()
@@ -132,13 +159,16 @@ conn.close()
 def highlight_low_stock(row, threshold):
     return ['background-color: #5c4d12;' if row['stock_level'] < threshold else '' for _ in row]
 
-# ==============================================================================
-# 🖥️ VISUAL INTERFACE LAYOUT & SIDEBAR CONTROL PANELS
-# ==============================================================================
 st.title("📦 EcomMatrix™: Distributed Relational Inventory Architecture")
 st.markdown("---")
 
 with st.sidebar:
+    st.markdown("👤 **Active Node Identity:** `admin`")
+    if st.button("Log Out of Node", type="secondary"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+        
+    st.markdown("---")
     st.markdown("### 🛠️ Query Control Panel")
     search_query = st.text_input("Search Product SKU Handle", "")
     selected_category = st.selectbox("Filter Categorical Matrix", category_options)
@@ -156,20 +186,18 @@ with st.sidebar:
     currency_rates = {"INR (₹)": (1.0, "₹"), "USD ($)": (0.012, "$"), "EUR (€)": (0.011, "€")}
     exchange_rate, currency_symbol = currency_rates[selected_currency]
 
-    # ➕ ADD PRODUCT FORM WITH INTEGRATED AUTO-MARKUP PRICING
+    # ➕ ADD PRODUCT FORM
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
     new_cost = st.number_input("Wholesale Cost Price (INR)", min_value=0.0, value=600.0)
     
-    # NEW INTERACTIVE WIDGET: AUTOMATED SMART MARKUP SELECTOR
     enable_markup = st.checkbox("Enable Automated Smart Markup Pricing", value=False)
     
     if enable_markup:
         markup_percent = st.slider("Target Profit Margin Markup (%)", min_value=10, max_value=150, value=40)
-        # Automatic formula calculation logic
         calculated_selling_price = new_cost * (1 + (markup_percent / 100))
-        st.info(f"💡 Calculated Selling Price: INR {calculated_selling_price:,.2f} ({markup_percent}% Markup applied)")
+        st.info(f"💡 Calculated Selling Price: INR {calculated_selling_price:,.2f}")
         new_price = calculated_selling_price
     else:
         new_price = st.number_input("Selling Price (INR)", min_value=1.0, value=999.0)
@@ -190,7 +218,7 @@ with st.sidebar:
             )
             conn.commit()
             conn.close()
-            st.success(f"Successfully added {new_name} at optimized profit pricing parameters!")
+            st.success(f"Successfully added {new_name}!")
             st.rerun()
 
     # 🗑️ REMOVE SKU FORM
@@ -244,7 +272,7 @@ conn = get_db_connection()
 raw_inventory_df = pd.read_sql_query(base_sql_query, conn, params=params)
 conn.close()
 
-if selected_category != "All Categories":
+if selected_category != "All Categories" and not raw_inventory_df.empty:
     raw_inventory_df = raw_inventory_df[raw_inventory_df['associated_categories'].str.contains(selected_category, na=False)]
 
 if not raw_inventory_df.empty:
@@ -278,7 +306,7 @@ else:
     raw_inventory_df['Display Price'] = converted_price
     raw_inventory_df['Display Cost'] = converted_cost
 
-    # Scorecard layout rows
+    # Metric Cards row
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Gross Pipeline Valuation", f"{currency_symbol}{total_warehouse_valuation:,.2f}")
     metric_col2.metric("Projected Operational Profit", f"{currency_symbol}{total_projected_profit:,.2f}", delta="📈 NET")
@@ -327,8 +355,10 @@ else:
         supplier_summary['Logistical Lead Time'] = supplier_summary['supplier_name'].map(lead_time_map).fillna('6 Days')
         
         st.markdown("##### 📈 Supplier Share Contribution (By Asset Value)")
-        pie_chart_data = supplier_summary[['supplier_name', 'Financial_Exposure']].set_index('supplier_name')
-        st.bar_chart(pie_chart_data, y="Financial_Exposure")
+        
+        # FIXED: Broken chart lines are safely compacted below to prevent truncation drops
+        sup_chart = supplier_summary[['supplier_name', 'Financial_Exposure']]
+        st.bar_chart(sup_chart.set_index('supplier_name'), y="Financial_Exposure")
         
         st.dataframe(
             supplier_summary.style.format({'Financial_Exposure': f'{currency_symbol}' + '{:,.2f}'}),
