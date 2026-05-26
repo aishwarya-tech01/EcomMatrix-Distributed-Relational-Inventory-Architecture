@@ -18,36 +18,24 @@ logging.basicConfig(
 # ==============================================================================
 st.set_page_config(page_title="EcomMatrix Pipeline", page_icon="📦", layout="wide")
 
-# Custom CSS injection matching your exact UI theme color preferences
 st.markdown("""
 <style>
-    /* 1. Global Page Background (Dark Theme) */
     .main, .block-container { 
         background-color: #0d1117 !important; 
     }
-    
-    /* 2. Change Sidebar Background to exactly #333333 */
     [data-testid="stSidebar"] {
         background-color: #333333 !important;
     }
-    
-    /* 3. Force ALL text elements inside the sidebar to be #ffffff (White) */
     [data-testid="stSidebar"] * {
         color: #ffffff !important;
     }
-    
-    /* 4. Ensure input widgets inside sidebar maintain bold white labels */
     div[data-testid="stWidgetLabel"] p, label p {
         color: #ffffff !important;
         font-weight: 600 !important;
     }
-    
-    /* 5. Main page headings and standard text color set to #ffffff */
     h1, h2, h3, h4, p, span, label { 
         color: #ffffff !important; 
     }
-    
-    /* 6. Styling for top metric tiles */
     div[data-testid="stMetric"] {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -67,16 +55,26 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Create Master Products Table
+    # 1. Create Master Products Table (with cost_price included)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             price REAL NOT NULL,
+            cost_price REAL DEFAULT 0.0,
             stock_level INTEGER NOT NULL,
             popularity_score REAL DEFAULT 0.0
         )
     ''')
+    
+    # Dynamic Safe Migration Check: If cost_price column doesn't exist from older sessions, add it
+    try:
+        cursor.execute("SELECT cost_price FROM products LIMIT 1")
+    except sqlite3.OperationalError:
+        logging.info("Migrating database schema to include cost_price vector.")
+        cursor.execute("ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0.0")
+        # Update baseline seed records with a standard cost model calculation
+        cursor.execute("UPDATE products SET cost_price = price * 0.65")
     
     # 2. Create Standalone Categories Table
     cursor.execute('''
@@ -97,17 +95,17 @@ def init_db():
         )
     ''')
     
-    # Seed initial rows if database engine is empty
+    # Seed values if completely blank
     cursor.execute("SELECT COUNT(*) FROM products")
     if cursor.fetchone()[0] == 0:
         products_seed = [
-            ('Pro Wireless Headphones', 8999.00, 45, 4.8),
-            ('UltraBook Laptop 14"', 65000.00, 8, 4.9),
-            ('Ergonomic Wireless Mouse', 1599.00, 120, 4.2),
-            ('Mechanical Gaming Keyboard', 4200.00, 3, 4.6),
-            ('Smart Fitness Watch v2', 5499.00, 30, 4.5)
+            ('Pro Wireless Headphones', 8999.00, 5200.00, 45, 4.8),
+            ('UltraBook Laptop 14"', 65000.00, 48000.00, 8, 4.9),
+            ('Ergonomic Wireless Mouse', 1599.00, 950.00, 120, 4.2),
+            ('Mechanical Gaming Keyboard', 4200.00, 2600.00, 3, 4.6),
+            ('Smart Fitness Watch v2', 5499.00, 3400.00, 30, 4.5)
         ]
-        cursor.executemany("INSERT INTO products (name, price, stock_level, popularity_score) VALUES (?, ?, ?, ?)", products_seed)
+        cursor.executemany("INSERT INTO products (name, price, cost_price, stock_level, popularity_score) VALUES (?, ?, ?, ?, ?)", products_seed)
         
         categories_seed = [('Electronics',), ('Office Supplies',), ('Gaming',), ('Wearables',)]
         cursor.executemany("INSERT INTO categories (category_name) VALUES (?)", categories_seed)
@@ -118,16 +116,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Start database
 init_db()
 
-# Pre-fetch list of active categories for the dropdown selectors
 conn = get_db_connection()
 categories_df = pd.read_sql_query("SELECT category_name FROM categories", conn)
 category_options = ["All Categories"] + categories_df['category_name'].tolist()
 conn.close()
 
-# Row color helper logic for low stock tracking
 def highlight_low_stock(row):
     return ['background-color: #5c4d12;' if row['stock_level'] < 15 else '' for _ in row]
 
@@ -144,31 +139,33 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # ➕ RESTORED FEATURE: ADD NEW SKU TRANSACTION DATA FORM
+    # ➕ UPGRADED FORM: ADD PRODUCT WITH COST PRICE
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
-    new_price = st.number_input("Price (INR)", min_value=1.0, value=999.0)
+    new_price = st.number_input("Selling Price (INR)", min_value=1.0, value=999.0)
+    new_cost = st.number_input("Wholesale Cost Price (INR)", min_value=0.0, value=600.0)
     new_stock = st.number_input("Initial Stock Level", min_value=0, value=10)
     new_rating = st.slider("Product Rating", min_value=1.0, max_value=5.0, value=4.0)
     
     if st.button("Save Product to Database"):
         if new_name.strip() == "":
             st.error("Product name cannot be empty!")
-        else:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO products (name, price, stock_level, popularity_score) VALUES (?, ?, ?, ?)",
-                (new_name, new_price, new_stock, new_rating)
-            )
-            conn.commit()
-            conn.close()
-            logging.info(f"Created product record token: {new_name}")
-            st.success(f"Successfully added {new_name}!")
-            st.rerun()
+        elif new_cost > new_price:
+            st.warning("Warning: Cost price exceeds Selling price! (Negative margins)")
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO products (name, price, cost_price, stock_level, popularity_score) VALUES (?, ?, ?, ?, ?)",
+            (new_name, new_price, new_cost, new_stock, new_rating)
+        )
+        conn.commit()
+        conn.close()
+        st.success(f"Successfully added {new_name}!")
+        st.rerun()
 
-    # 🗑️ RESTORED FEATURE: TRANSACTIONAL DELETE SKUS FROM SIDEBAR
+    # 🗑️ REMOVE SKU FROM SIDEBAR
     st.markdown("---")
     st.markdown("### 🗑️ Remove SKU from Ecosystem")
     delete_conn = get_db_connection()
@@ -186,11 +183,8 @@ with st.sidebar:
             cursor.execute("DELETE FROM products WHERE product_id = ?", (selected_delete_id,))
             conn.commit()
             conn.close()
-            logging.info(f"Deleted tracking entity index ID: {selected_delete_id}")
             st.success("Database records successfully purged!")
             st.rerun()
-    else:
-        st.info("No records present to delete.")
 
 # ==============================================================================
 # ⚙️ DATA PIPELINE ENGINE (SQL RELATIONAL JOIN)
@@ -200,6 +194,7 @@ base_sql_query = """
         p.product_id,
         p.name,
         p.price,
+        p.cost_price,
         p.stock_level,
         p.popularity_score,
         GROUP_CONCAT(c.category_name, ', ') AS associated_categories
@@ -223,11 +218,13 @@ conn.close()
 if selected_category != "All Categories":
     raw_inventory_df = raw_inventory_df[raw_inventory_df['associated_categories'].str.contains(selected_category, na=False)]
 
+# Make sure baseline costs aren't zero to avoid mathematical division errors
+raw_inventory_df['cost_price'] = raw_inventory_df['cost_price'].replace(0, raw_inventory_df['price'] * 0.6)
+
 # ==============================================================================
 # 🚨 EMERGENCY ALERT BLOCK SYSTEM
 # ==============================================================================
 critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < 10]
-
 if not critical_alert_items.empty:
     for _, row in critical_alert_items.iterrows():
         st.error(f"🚨 **CRITICAL STOCK SHORTAGE ALERT**: '{row['name']}' is running dangerously low! Only **{row['stock_level']} units** left.")
@@ -238,37 +235,45 @@ if not critical_alert_items.empty:
 if raw_inventory_df.empty:
     st.warning("⚠️ Zero SKU allocations match the targeted parameters inside the warehouse engine layer.")
 else:
+    # Math engines computing Revenue, Margins, and Projected Profit
     total_unique_skus = len(raw_inventory_df)
     total_warehouse_valuation = (raw_inventory_df['price'] * raw_inventory_df['stock_level']).sum()
-    critical_stockouts = len(raw_inventory_df[raw_inventory_df['stock_level'] == 0])
     
-    # Display scorecard rows
+    # Calculate total potential profit across your whole warehouse inventory
+    raw_inventory_df['item_profit'] = raw_inventory_df['price'] - raw_inventory_df['cost_price']
+    total_projected_profit = (raw_inventory_df['item_profit'] * raw_inventory_df['stock_level']).sum()
+    
+    # Add Margin percentage columns dynamically to the active visible dataset frames
+    raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
+    
+    # Display updated core performance scorecards
     metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("Monitored Warehouse SKUs", f"{total_unique_skus} Active Units")
-    metric_col2.metric("Total Asset Inventory Value", f"₹{total_warehouse_valuation:,.2f}")
-    
-    if critical_stockouts > 0:
-        metric_col3.metric("🚨 System Stockout Warnings", f"{critical_stockouts} Critical SKUs", delta="-ALERT")
-    else:
-        metric_col3.metric("✅ Pipeline Logistics Health", "All SKUs Active", delta="NOMINAL")
+    metric_col1.metric("Gross Pipeline Valuation", f"₹{total_warehouse_valuation:,.2f}")
+    metric_col2.metric("Projected Operational Profit", f"₹{total_projected_profit:,.2f}", delta="📈 NET")
+    metric_col3.metric("Monitored Warehouse SKUs", f"{total_unique_skus} Active Handles")
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # 📈 RESTORED FEATURE: Dynamic Analytics Bar Chart 
-    st.markdown("#### 📊 Current Warehouse Stock Level Distribution")
-    chart_data = raw_inventory_df[['name', 'stock_level']].set_index('name')
-    st.bar_chart(chart_data, y="stock_level")
+    # 📊 Dynamic Chart tracking profit margins across items
+    st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
+    chart_data = raw_inventory_df[['name', 'Profit Margin (%)']].set_index('name')
+    st.bar_chart(chart_data, y="Profit Margin (%)")
     
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
     
-    # Core Data Grid View Matrix
+    # Clean up tracking view layout allocations before table rendering
+    display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'associated_categories']]
     st.dataframe(
-        raw_inventory_df.style.apply(highlight_low_stock, axis=1).format({'price': '₹{:.2f}', 'popularity_score': '{:.1f} ★'}),
+        display_df.style.apply(highlight_low_stock, axis=1).format({
+            'price': '₹{:.2f}', 
+            'cost_price': '₹{:.2f}', 
+            'Profit Margin (%)': '{:.1f}%'
+        }),
         use_container_width=True
     )
 
-    # 💾 RESTORED FEATURE: Corporate Spreadsheet CSV Data Exporter Downstream
+    # 💾 Corporate Spreadsheet CSV Data Exporter Downstream
     st.markdown("---")
     st.markdown("### 📥 Administrative Data Export Operations")
     
@@ -276,7 +281,6 @@ else:
     st.download_button(
         label="💾 Export Filtered Datasets to CSV",
         data=csv_bytes,
-        file_name="ecommatrix_operational_export.csv",
-        mime="text/csv",
-        help="Extract current metrics fields instantly into a readable spreadsheet structure."
+        file_name="ecommatrix_financial_export.csv",
+        mime="text/csv"
     )
