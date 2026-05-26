@@ -55,7 +55,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Create Master Products Table (Includes supplier_name field)
+    # 1. Create Master Products Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,14 +68,14 @@ def init_db():
         )
     ''')
     
-    # Safe Dynamic Migration: Add cost_price if it's missing from old setups
+    # Safe Dynamic Migration Check for cost_price
     try:
         cursor.execute("SELECT cost_price FROM products LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0.0")
         cursor.execute("UPDATE products SET cost_price = price * 0.65")
 
-    # Safe Dynamic Migration: Add supplier_name column if it's missing from old setups
+    # Safe Dynamic Migration Check for supplier_name
     try:
         cursor.execute("SELECT supplier_name FROM products LIMIT 1")
     except sqlite3.OperationalError:
@@ -101,7 +101,7 @@ def init_db():
         )
     ''')
     
-    # Baseline data seed injections
+    # Seed values if completely blank
     cursor.execute("SELECT COUNT(*) FROM products")
     if cursor.fetchone()[0] == 0:
         products_seed = [
@@ -145,7 +145,7 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # ➕ ADD PRODUCT FORM WITH NEW SUPPLIER OPTION
+    # ➕ ADD PRODUCT FORM
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
@@ -248,7 +248,7 @@ else:
     total_projected_profit = (raw_inventory_df['item_profit'] * raw_inventory_df['stock_level']).sum()
     raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
     
-    # Top Metrics Board
+    # Scorecards
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Gross Pipeline Valuation", f"₹{total_warehouse_valuation:,.2f}")
     metric_col2.metric("Projected Operational Profit", f"₹{total_projected_profit:,.2f}", delta="📈 NET")
@@ -256,34 +256,69 @@ else:
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Financial Analytics Chart
-    st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
-    chart_data = raw_inventory_df[['name', 'Profit Margin (%)']].set_index('name')
-    st.bar_chart(chart_data, y="Profit Margin (%)")
+    # Main Tabs Layout to split Product view from Supplier Insights
+    tab1, tab2 = st.tabs(["📊 Inventory Products View", "🏭 Supplier Performance Analytics"])
     
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
-    
-    display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
-    st.dataframe(
-        display_df.style.apply(highlight_low_stock, axis=1).format({
-            'price': '₹{:.2f}', 
-            'cost_price': '₹{:.2f}', 
-            'Profit Margin (%)': '{:.1f}%'
-        }),
-        use_container_width=True
-    )
+    with tab1:
+        st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
+        chart_data = raw_inventory_df[['name', 'Profit Margin (%)']].set_index('name')
+        st.bar_chart(chart_data, y="Profit Margin (%)")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
+        
+        display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
+        st.dataframe(
+            display_df.style.apply(highlight_low_stock, axis=1).format({
+                'price': '₹{:.2f}', 
+                'cost_price': '₹{:.2f}', 
+                'Profit Margin (%)': '{:.1f}%'
+            }),
+            use_container_width=True
+        )
 
     # ==============================================================================
-    # 🤖 AUTOMATED PROCUREMENT REORDER MODULE
+    # 🤖 NEW FEATURE ADDED: SUPPLIER PERFORMANCE & LEAD TIME ANALYTICS
     # ==============================================================================
+    with tab2:
+        st.markdown("#### 🏭 Strategic Vendor Matrix Metrics")
+        
+        # Group and calculate aggregate values for each supplier
+        raw_inventory_df['Stock Valuation'] = raw_inventory_df['price'] * raw_inventory_df['stock_level']
+        
+        supplier_summary = raw_inventory_df.groupby('supplier_name').agg(
+            Total_SKUs=('product_id', 'count'),
+            Total_Stock_Units=('stock_level', 'sum'),
+            Financial_Exposure=('Stock Valuation', 'sum')
+        ).reset_index()
+        
+        # Add a simulated logistical lead-time baseline to map real business wait-times
+        lead_time_map = {
+            'NexGen Electronics Ltd': '3 Days (Express)',
+            'Alpha Supply Chain': '7 Days (Standard)',
+            'WearableTech Distributors': '5 Days (Standard)',
+            'Global Logistics Corp': '12 Days (Extended)'
+        }
+        supplier_summary['Logistical Lead Time'] = supplier_summary['supplier_name'].map(lead_time_map).fillna('6 Days')
+        
+        # Render a pie chart showing which supplier holds the most inventory financial weight
+        st.markdown("##### 📈 Supplier Share Contribution (By Asset Value)")
+        pie_chart_data = supplier_summary[['supplier_name', 'Financial_Exposure']].set_index('supplier_name')
+        st.bar_chart(pie_chart_data, y="Financial_Exposure")
+        
+        # Render the summary data block
+        st.dataframe(
+            supplier_summary.style.format({'Financial_Exposure': '₹{:,.2f}'}),
+            use_container_width=True
+        )
+
+    # Procurement Reorder Module
     st.markdown("---")
     st.markdown("### 🤖 Automated Procurement Reorder Engine")
     
     if not critical_alert_items.empty:
         st.write("The system has auto-generated a purchase order draft to restore optimal stock numbers (+50 units):")
         
-        # Build reorder spreadsheet fields layout dynamically
         po_df = critical_alert_items[['name', 'supplier_name', 'cost_price']].copy()
         po_df['Reorder Quantity'] = 50
         po_df['Estimated Cost (INR)'] = po_df['cost_price'] * po_df['Reorder Quantity']
