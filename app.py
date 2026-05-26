@@ -55,7 +55,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Create Master Products Table (with cost_price included)
+    # 1. Create Master Products Table (Includes supplier_name field)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,17 +63,24 @@ def init_db():
             price REAL NOT NULL,
             cost_price REAL DEFAULT 0.0,
             stock_level INTEGER NOT NULL,
-            popularity_score REAL DEFAULT 0.0
+            popularity_score REAL DEFAULT 0.0,
+            supplier_name TEXT DEFAULT 'Global Logistics Corp'
         )
     ''')
     
-    # Dynamic Safe Migration Check
+    # Safe Dynamic Migration: Add cost_price if it's missing from old setups
     try:
         cursor.execute("SELECT cost_price FROM products LIMIT 1")
     except sqlite3.OperationalError:
-        logging.info("Migrating database schema to include cost_price vector.")
         cursor.execute("ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0.0")
         cursor.execute("UPDATE products SET cost_price = price * 0.65")
+
+    # Safe Dynamic Migration: Add supplier_name column if it's missing from old setups
+    try:
+        cursor.execute("SELECT supplier_name FROM products LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE products ADD COLUMN supplier_name TEXT DEFAULT 'Global Logistics Corp'")
+        cursor.execute("UPDATE products SET supplier_name = 'NexGen Electronics Ltd' WHERE product_id IN (1, 2, 4)")
     
     # 2. Create Standalone Categories Table
     cursor.execute('''
@@ -94,17 +101,17 @@ def init_db():
         )
     ''')
     
-    # Seed values if completely blank
+    # Baseline data seed injections
     cursor.execute("SELECT COUNT(*) FROM products")
     if cursor.fetchone()[0] == 0:
         products_seed = [
-            ('Pro Wireless Headphones', 8999.00, 5200.00, 45, 4.8),
-            ('UltraBook Laptop 14"', 65000.00, 48000.00, 8, 4.9),
-            ('Ergonomic Wireless Mouse', 1599.00, 950.00, 120, 4.2),
-            ('Mechanical Gaming Keyboard', 4200.00, 2600.00, 3, 4.6),
-            ('Smart Fitness Watch v2', 5499.00, 3400.00, 30, 4.5)
+            ('Pro Wireless Headphones', 8999.00, 5200.00, 45, 4.8, 'NexGen Electronics Ltd'),
+            ('UltraBook Laptop 14"', 65000.00, 48000.00, 8, 4.9, 'NexGen Electronics Ltd'),
+            ('Ergonomic Wireless Mouse', 1599.00, 950.00, 120, 4.2, 'Alpha Supply Chain'),
+            ('Mechanical Gaming Keyboard', 4200.00, 2600.00, 3, 4.6, 'NexGen Electronics Ltd'),
+            ('Smart Fitness Watch v2', 5499.00, 3400.00, 30, 4.5, 'WearableTech Distributors')
         ]
-        cursor.executemany("INSERT INTO products (name, price, cost_price, stock_level, popularity_score) VALUES (?, ?, ?, ?, ?)", products_seed)
+        cursor.executemany("INSERT INTO products (name, price, cost_price, stock_level, popularity_score, supplier_name) VALUES (?, ?, ?, ?, ?, ?)", products_seed)
         
         categories_seed = [('Electronics',), ('Office Supplies',), ('Gaming',), ('Wearables',)]
         cursor.executemany("INSERT INTO categories (category_name) VALUES (?)", categories_seed)
@@ -138,7 +145,7 @@ with st.sidebar:
     max_price = st.slider("Max Budget Ceiling (INR)", min_value=1000, max_value=100000, value=100000)
     min_popularity = st.slider("Minimum Consumer Rating Threshold", min_value=1.0, max_value=5.0, value=1.0)
 
-    # ➕ ADD PRODUCT FORM
+    # ➕ ADD PRODUCT FORM WITH NEW SUPPLIER OPTION
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
@@ -146,6 +153,7 @@ with st.sidebar:
     new_cost = st.number_input("Wholesale Cost Price (INR)", min_value=0.0, value=600.0)
     new_stock = st.number_input("Initial Stock Level", min_value=0, value=10)
     new_rating = st.slider("Product Rating", min_value=1.0, max_value=5.0, value=4.0)
+    new_supplier = st.selectbox("Assign Supplier Partner", ["NexGen Electronics Ltd", "Alpha Supply Chain", "WearableTech Distributors", "Global Logistics Corp"])
     
     if st.button("Save Product to Database"):
         if new_name.strip() == "":
@@ -154,8 +162,8 @@ with st.sidebar:
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO products (name, price, cost_price, stock_level, popularity_score) VALUES (?, ?, ?, ?, ?)",
-                (new_name, new_price, new_cost, new_stock, new_rating)
+                "INSERT INTO products (name, price, cost_price, stock_level, popularity_score, supplier_name) VALUES (?, ?, ?, ?, ?, ?)",
+                (new_name, new_price, new_cost, new_stock, new_rating, new_supplier)
             )
             conn.commit()
             conn.close()
@@ -194,6 +202,7 @@ base_sql_query = """
         p.cost_price,
         p.stock_level,
         p.popularity_score,
+        p.supplier_name,
         GROUP_CONCAT(c.category_name, ', ') AS associated_categories
     FROM products p
     LEFT JOIN product_category_map pcm ON p.product_id = pcm.product_id
@@ -215,13 +224,13 @@ conn.close()
 if selected_category != "All Categories":
     raw_inventory_df = raw_inventory_df[raw_inventory_df['associated_categories'].str.contains(selected_category, na=False)]
 
-# FIXED EXPLICIT PANDAS OPERATION FOR ZERO-VALUES
-raw_inventory_df.loc[raw_inventory_df['cost_price'] == 0, 'cost_price'] = raw_inventory_df['price'] * 0.65
+if not raw_inventory_df.empty:
+    raw_inventory_df.loc[raw_inventory_df['cost_price'] == 0, 'cost_price'] = raw_inventory_df['price'] * 0.65
 
 # ==============================================================================
 # 🚨 EMERGENCY ALERT BLOCK SYSTEM
 # ==============================================================================
-critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < 10]
+critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < 10] if not raw_inventory_df.empty else pd.DataFrame()
 if not critical_alert_items.empty:
     for _, row in critical_alert_items.iterrows():
         st.error(f"🚨 **CRITICAL STOCK SHORTAGE ALERT**: '{row['name']}' is running dangerously low! Only **{row['stock_level']} units** left.")
@@ -235,12 +244,11 @@ else:
     total_unique_skus = len(raw_inventory_df)
     total_warehouse_valuation = (raw_inventory_df['price'] * raw_inventory_df['stock_level']).sum()
     
-    # Calculate potential profit margins safely
     raw_inventory_df['item_profit'] = raw_inventory_df['price'] - raw_inventory_df['cost_price']
     total_projected_profit = (raw_inventory_df['item_profit'] * raw_inventory_df['stock_level']).sum()
     raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
     
-    # Scorecards
+    # Top Metrics Board
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Gross Pipeline Valuation", f"₹{total_warehouse_valuation:,.2f}")
     metric_col2.metric("Projected Operational Profit", f"₹{total_projected_profit:,.2f}", delta="📈 NET")
@@ -248,7 +256,7 @@ else:
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Bar Chart tracking profit margins
+    # Financial Analytics Chart
     st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
     chart_data = raw_inventory_df[['name', 'Profit Margin (%)']].set_index('name')
     st.bar_chart(chart_data, y="Profit Margin (%)")
@@ -256,7 +264,7 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
     
-    display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'associated_categories']]
+    display_df = raw_inventory_df[['product_id', 'name', 'price', 'cost_price', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
     st.dataframe(
         display_df.style.apply(highlight_low_stock, axis=1).format({
             'price': '₹{:.2f}', 
@@ -266,7 +274,37 @@ else:
         use_container_width=True
     )
 
-    # Spreadsheet Export
+    # ==============================================================================
+    # 🤖 AUTOMATED PROCUREMENT REORDER MODULE
+    # ==============================================================================
+    st.markdown("---")
+    st.markdown("### 🤖 Automated Procurement Reorder Engine")
+    
+    if not critical_alert_items.empty:
+        st.write("The system has auto-generated a purchase order draft to restore optimal stock numbers (+50 units):")
+        
+        # Build reorder spreadsheet fields layout dynamically
+        po_df = critical_alert_items[['name', 'supplier_name', 'cost_price']].copy()
+        po_df['Reorder Quantity'] = 50
+        po_df['Estimated Cost (INR)'] = po_df['cost_price'] * po_df['Reorder Quantity']
+        
+        st.dataframe(
+            po_df.style.format({'cost_price': '₹{:.2f}', 'Estimated Cost (INR)': '₹{:.2f}'}),
+            use_container_width=True
+        )
+        
+        po_csv = po_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Dispatch Draft Purchase Order to CSV",
+            data=po_csv,
+            file_name="automated_supplier_reorder_po.csv",
+            mime="text/csv",
+            type="primary"
+        )
+    else:
+        st.success("✅ Logistical Equilibrium Maintained. No purchase orders required right now.")
+
+    # Main CSV Exporter
     st.markdown("---")
     st.markdown("### 📥 Administrative Data Export Operations")
     
