@@ -1,41 +1,21 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import logging
+import plotly.express as px  # For handling the custom neon charts
 
 # ==============================================================================
-# 🪵 BACKEND ENGINE: SYSTEM LOGGING CONFIGURATION
-# ==============================================================================
-logging.basicConfig(
-    filename='ecommatrix_pipeline.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# ==============================================================================
-# 🎨 FRONTEND CONFIGURATION & VISUAL STYLING
+# 1. FRONTEND CONFIGURATION & VISUAL STYLING
 # ==============================================================================
 st.set_page_config(page_title="EcomMatrix Pipeline", page_icon="📦", layout="wide")
 
+# Custom Dark Matrix Theme Styling
 st.markdown("""
 <style>
-    .main, .block-container { 
-        background-color: #0d1117 !important; 
-    }
-    [data-testid="stSidebar"] {
-        background-color: #333333 !important;
-    }
-    [data-testid="stSidebar"] * {
-        color: #ffffff !important;
-    }
-    div[data-testid="stWidgetLabel"] p, label p {
-        color: #ffffff !important;
-        font-weight: 600 !important;
-    }
-    h1, h2, h3, h4, p, span, label { 
-        color: #ffffff !important; 
-    }
+    .main, .block-container { background-color: #0d1117 !important; }
+    [data-testid="stSidebar"] { background-color: #333333 !important; }
+    [data-testid="stSidebar"] * { color: #ffffff !important; }
+    div[data-testid="stWidgetLabel"] p, label p { color: #ffffff !important; font-weight: 600 !important; }
+    h1, h2, h3, h4, p, span, label { color: #ffffff !important; }
     div[data-testid="stMetric"] {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -46,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 🗄️ DATABASE ARCHITECTURE LAYER (SQLite Relational Ecosystem)
+# 2. DATABASE INITIALIZATION & RELATIONAL SEEDING
 # ==============================================================================
 def get_db_connection():
     return sqlite3.connect('ecommerce_inventory.db')
@@ -55,7 +35,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Create Master Products Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,21 +47,6 @@ def init_db():
         )
     ''')
     
-    # Safe Dynamic Migration Check for cost_price
-    try:
-        cursor.execute("SELECT cost_price FROM products LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0.0")
-        cursor.execute("UPDATE products SET cost_price = price * 0.65")
-
-    # Safe Dynamic Migration Check for supplier_name
-    try:
-        cursor.execute("SELECT supplier_name FROM products LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE products ADD COLUMN supplier_name TEXT DEFAULT 'Global Logistics Corp'")
-        cursor.execute("UPDATE products SET supplier_name = 'NexGen Electronics Ltd' WHERE product_id IN (1, 2, 4)")
-    
-    # 2. Create Standalone Categories Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             category_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +54,6 @@ def init_db():
         )
     ''')
     
-    # 3. Create Many-to-Many Bridge Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS product_category_map (
             product_id INTEGER,
@@ -101,12 +64,11 @@ def init_db():
         )
     ''')
     
-    # Seed values if completely blank
     cursor.execute("SELECT COUNT(*) FROM products")
     if cursor.fetchone()[0] == 0:
         products_seed = [
             ('Pro Wireless Headphones', 8999.00, 5200.00, 45, 4.8, 'NexGen Electronics Ltd'),
-            ('UltraBook Laptop 14"', 65000.00, 48000.00, 8, 4.9, 'NexGen Electronics Ltd'),
+            ('UltraBook Laptop 14"', 65000.00, 48000.00, 12, 4.9, 'NexGen Electronics Ltd'),
             ('Ergonomic Wireless Mouse', 1599.00, 950.00, 120, 4.2, 'Alpha Supply Chain'),
             ('Mechanical Gaming Keyboard', 4200.00, 2600.00, 3, 4.6, 'NexGen Electronics Ltd'),
             ('Smart Fitness Watch v2', 5499.00, 3400.00, 30, 4.5, 'WearableTech Distributors')
@@ -125,7 +87,7 @@ def init_db():
 init_db()
 
 # ==============================================================================
-# 🔒 SECURITY LAYER: USER AUTHENTICATION
+# 3. SECURITY AUTHENTICATION SYSTEM
 # ==============================================================================
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -142,28 +104,25 @@ if not st.session_state["authenticated"]:
         if st.button("Authenticate System Initialization", type="primary"):
             if input_user == "admin" and input_pass == "matrix99":
                 st.session_state["authenticated"] = True
-                st.success("Verification confirmed. Accessing system database framework layers...")
+                st.success("Access Authorized.")
                 st.rerun()
             else:
-                st.error("Access Denied: Invalid handle combination match or unauthorized profile footprint.")
+                st.error("Access Denied: Invalid handle combination match.")
     st.stop()
 
 # ==============================================================================
-# 📊 CORE APP WORKSPACE (EXPOSED ONLY POST AUTHENTICATION)
+# 4. SIDEBAR PANEL CONTROL WORKSPACE
 # ==============================================================================
 conn = get_db_connection()
 categories_df = pd.read_sql_query("SELECT category_name FROM categories", conn)
 category_options = ["All Categories"] + categories_df['category_name'].tolist()
 conn.close()
 
-def highlight_low_stock(row, threshold):
-    return ['background-color: #5c4d12;' if row['stock_level'] < threshold else '' for _ in row]
-
 st.title("📦 EcomMatrix™: Distributed Relational Inventory Architecture")
 st.markdown("---")
 
 with st.sidebar:
-    st.markdown("👤 **Active Node Identity:** `admin`")
+    st.markdown(f"👤 **Active Node Identity:** `admin`")
     if st.button("Log Out of Node", type="secondary"):
         st.session_state["authenticated"] = False
         st.rerun()
@@ -182,18 +141,16 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🌐 Market Currency Engine")
     selected_currency = st.selectbox("Select Display Currency", ["INR (₹)", "USD ($)", "EUR (€)"])
-
     currency_rates = {"INR (₹)": (1.0, "₹"), "USD ($)": (0.012, "$"), "EUR (€)": (0.011, "€")}
     exchange_rate, currency_symbol = currency_rates[selected_currency]
 
-    # ➕ ADD PRODUCT FORM
+    # Add New Product Form
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
     new_cost = st.number_input("Wholesale Cost Price (INR)", min_value=0.0, value=600.0)
     
     enable_markup = st.checkbox("Enable Automated Smart Markup Pricing", value=False)
-    
     if enable_markup:
         markup_percent = st.slider("Target Profit Margin Markup (%)", min_value=10, max_value=150, value=40)
         calculated_selling_price = new_cost * (1 + (markup_percent / 100))
@@ -221,7 +178,7 @@ with st.sidebar:
             st.success(f"Successfully added {new_name}!")
             st.rerun()
 
-    # 🗑️ REMOVE SKU FORM
+    # Remove SKU Purge Form
     st.markdown("---")
     st.markdown("### 🗑️ Remove SKU from Ecosystem")
     delete_conn = get_db_connection()
@@ -243,17 +200,11 @@ with st.sidebar:
             st.rerun()
 
 # ==============================================================================
-# ⚙️ DATA PIPELINE ENGINE (SQL RELATIONAL JOIN)
+# 5. DATA PIPELINE ENGINE (SQL JOINS OPTIMIZED)
 # ==============================================================================
 base_sql_query = """
     SELECT 
-        p.product_id,
-        p.name,
-        p.price,
-        p.cost_price,
-        p.stock_level,
-        p.popularity_score,
-        p.supplier_name,
+        p.product_id, p.name, p.price, p.cost_price, p.stock_level, p.popularity_score, p.supplier_name,
         GROUP_CONCAT(c.category_name, ', ') AS associated_categories
     FROM products p
     LEFT JOIN product_category_map pcm ON p.product_id = pcm.product_id
@@ -275,42 +226,40 @@ conn.close()
 if selected_category != "All Categories" and not raw_inventory_df.empty:
     raw_inventory_df = raw_inventory_df[raw_inventory_df['associated_categories'].str.contains(selected_category, na=False)]
 
+# ==============================================================================
+# 6. BUSINESS ANALYTICS & REORDER FORECASTING CALCULATIONS
+# ==============================================================================
 if not raw_inventory_df.empty:
-    raw_inventory_df.loc[raw_inventory_df['cost_price'] == 0, 'cost_price'] = raw_inventory_df['price'] * 0.65
+    daily_sales_rate = 2.0
+    raw_inventory_df['Days_to_Stockout'] = (raw_inventory_df['stock_level'] / daily_sales_rate).round(1)
+    
+    raw_inventory_df['item_profit'] = raw_inventory_df['price'] - raw_inventory_df['cost_price']
+    raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
+    
+    # Currency Conversion Engine + 12% Tax Integration
+    raw_inventory_df['Display Price'] = raw_inventory_df['price'] * exchange_rate * 1.12
+    raw_inventory_df['Display Cost'] = raw_inventory_df['cost_price'] * exchange_rate
+    raw_inventory_df['Stock Valuation'] = raw_inventory_df['Display Price'] * raw_inventory_df['stock_level']
 
-# ==============================================================================
-# 🚨 EMERGENCY ALERT BLOCK SYSTEM
-# ==============================================================================
 critical_alert_items = raw_inventory_df[raw_inventory_df['stock_level'] < alert_threshold] if not raw_inventory_df.empty else pd.DataFrame()
 if not critical_alert_items.empty:
     for _, row in critical_alert_items.iterrows():
-        st.error(f"🚨 **LOGISTICAL ALERT**: '{row['name']}' has fallen below your warning ceiling! Current Stock: **{row['stock_level']} units** (Limit: {alert_threshold}).")
+        st.error(f"🚨 **LOGISTICAL ALERT**: '{row['name']}' has fallen below warning ceiling! Current Stock: **{row['stock_level']} units**.")
 
 # ==============================================================================
-# 📊 PRESENTATION LAYER: KPI TILES, CHARTS, AND DATAFRAMES
+# 7. MAIN PRESENTATION LAYER (CHARTS, GRAPHS & DATA TABLES)
 # ==============================================================================
 if raw_inventory_df.empty:
-    st.warning("⚠️ Zero SKU allocations match the targeted parameters inside the warehouse engine layer.")
+    st.warning("⚠️ Zero SKU allocations match the targeted filters.")
 else:
-    converted_price = raw_inventory_df['price'] * exchange_rate
-    converted_cost = raw_inventory_df['cost_price'] * exchange_rate
+    total_valuation = raw_inventory_df['Stock Valuation'].sum()
+    total_projected_profit = ((raw_inventory_df['Display Price'] - raw_inventory_df['Display Cost']) * raw_inventory_df['stock_level']).sum()
+    avg_stockout = raw_inventory_df['Days_to_Stockout'].mean()
     
-    total_unique_skus = len(raw_inventory_df)
-    total_warehouse_valuation = (converted_price * raw_inventory_df['stock_level']).sum()
-    
-    raw_inventory_df['item_profit'] = raw_inventory_df['price'] - raw_inventory_df['cost_price']
-    converted_profit = raw_inventory_df['item_profit'] * exchange_rate
-    total_projected_profit = (converted_profit * raw_inventory_df['stock_level']).sum()
-    raw_inventory_df['Profit Margin (%)'] = (raw_inventory_df['item_profit'] / raw_inventory_df['price']) * 100
-    
-    raw_inventory_df['Display Price'] = converted_price
-    raw_inventory_df['Display Cost'] = converted_cost
-
-    # Metric Cards row
     metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("Gross Pipeline Valuation", f"{currency_symbol}{total_warehouse_valuation:,.2f}")
-    metric_col2.metric("Projected Operational Profit", f"{currency_symbol}{total_projected_profit:,.2f}", delta="📈 NET")
-    metric_col3.metric("Monitored Warehouse SKUs", f"{total_unique_skus} Active Handles")
+    metric_col1.metric("Gross Pipeline Valuation (With Tax)", f"{currency_symbol}{total_valuation:,.2f}")
+    metric_col2.metric("Projected Operational Profit", f"{currency_symbol}{total_projected_profit:,.2f}")
+    metric_col3.metric("Avg Days to Stockout", f"{avg_stockout:.1f} Days")
         
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -318,16 +267,28 @@ else:
     
     with tab1:
         st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
-        chart_data = raw_inventory_df[['name', 'Profit Margin (%)']].set_index('name')
-        st.bar_chart(chart_data, y="Profit Margin (%)")
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("#### 📄 Real-Time Normalized Architecture Data Stream")
+        # --- FEATURE SELECTION: VIBRANT NEON YELLOW BARS + WHITE BACKDROP ---
+        fig_margin = px.bar(
+            raw_inventory_df, 
+            x='name', 
+            y='Profit Margin (%)',
+            labels={'name': 'Product Name', 'Profit Margin (%)': 'Margin (%)'}
+        )
+        fig_margin.update_traces(marker_color='#CCFF00', marker_line_color='#CCFF00')
+        fig_margin.update_layout(
+            plot_bgcolor='#ffffff',   # Interior background to solid white
+            paper_bgcolor='#ffffff',  # Outer frame background to solid white
+            font_color='#000000',     # Flipped font labels to clear black for readability
+            xaxis={'categoryorder':'total descending'}
+        )
+        st.plotly_chart(fig_margin, use_container_width=True)
         
-        display_df = raw_inventory_df[['product_id', 'name', 'Display Price', 'Display Cost', 'stock_level', 'Profit Margin (%)', 'supplier_name', 'associated_categories']]
+        st.markdown("#### 📄 Real-Time Inventory View Data Grid")
+        display_df = raw_inventory_df[['product_id', 'name', 'Display Price', 'Display Cost', 'stock_level', 'Days_to_Stockout', 'Profit Margin (%)', 'associated_categories']]
         
         st.dataframe(
-            display_df.style.apply(highlight_low_stock, threshold=alert_threshold, axis=1).format({
+            display_df.style.format({
                 'Display Price': f'{currency_symbol}' + '{:.2f}',
                 'Display Cost': f'{currency_symbol}' + '{:.2f}',
                 'Profit Margin (%)': '{:.1f}%'
@@ -338,27 +299,29 @@ else:
     with tab2:
         st.markdown("#### 🏭 Strategic Vendor Matrix Metrics")
         
-        raw_inventory_df['Stock Valuation'] = raw_inventory_df['Display Price'] * raw_inventory_df['stock_level']
-        
         supplier_summary = raw_inventory_df.groupby('supplier_name').agg(
             Total_SKUs=('product_id', 'count'),
             Total_Stock_Units=('stock_level', 'sum'),
             Financial_Exposure=('Stock Valuation', 'sum')
         ).reset_index()
         
-        lead_time_map = {
-            'NexGen Electronics Ltd': '3 Days (Express)',
-            'Alpha Supply Chain': '7 Days (Standard)',
-            'WearableTech Distributors': '5 Days (Standard)',
-            'Global Logistics Corp': '12 Days (Extended)'
-        }
-        supplier_summary['Logistical Lead Time'] = supplier_summary['supplier_name'].map(lead_time_map).fillna('6 Days')
-        
         st.markdown("##### 📈 Supplier Share Contribution (By Asset Value)")
         
-        # FIXED: Broken chart lines are safely compacted below to prevent truncation drops
-        sup_chart = supplier_summary[['supplier_name', 'Financial_Exposure']]
-        st.bar_chart(sup_chart.set_index('supplier_name'), y="Financial_Exposure")
+        # --- FEATURE SELECTION: VIBRANT NEON YELLOW BARS + WHITE BACKDROP ---
+        fig_supplier = px.bar(
+            supplier_summary,
+            x='supplier_name',
+            y='Financial_Exposure',
+            labels={'supplier_name': 'Supplier Partner', 'Financial_Exposure': 'Asset Value'}
+        )
+        fig_supplier.update_traces(marker_color='#CCFF00', marker_line_color='#CCFF00')
+        fig_supplier.update_layout(
+            plot_bgcolor='#ffffff',   # Interior background to solid white
+            paper_bgcolor='#ffffff',  # Outer frame background to solid white
+            font_color='#000000',     # Flipped font labels to clear black for readability
+            xaxis={'categoryorder':'total descending'}
+        )
+        st.plotly_chart(fig_supplier, use_container_width=True)
         
         st.dataframe(
             supplier_summary.style.format({'Financial_Exposure': f'{currency_symbol}' + '{:,.2f}'}),
@@ -366,7 +329,7 @@ else:
         )
 
 # ==============================================================================
-# 🤖 AUTOMATED PROCUREMENT REORDER ENGINE
+# 8. AUTOMATED PROCUREMENT REORDER ENGINE
 # ==============================================================================
     st.markdown("---")
     st.markdown("### 🤖 Automated Procurement Reorder Engine")
@@ -374,8 +337,7 @@ else:
     if not critical_alert_items.empty:
         st.write(f"The system has auto-generated a purchase order draft to restore items below {alert_threshold} units:")
         
-        po_df = critical_alert_items[['name', 'supplier_name', 'cost_price']].copy()
-        po_df['Display Cost'] = po_df['cost_price'] * exchange_rate
+        po_df = critical_alert_items[['name', 'supplier_name', 'Display Cost']].copy()
         po_df['Reorder Quantity'] = 50
         po_df['Estimated Cost'] = po_df['Display Cost'] * po_df['Reorder Quantity']
         
@@ -397,15 +359,3 @@ else:
         )
     else:
         st.success("✅ Logistical Equilibrium Maintained. No purchase orders required right now.")
-
-    # Main CSV Exporter
-    st.markdown("---")
-    st.markdown("### 📥 Administrative Data Export Operations")
-    
-    csv_bytes = raw_inventory_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="💾 Export Filtered Datasets to CSV",
-        data=csv_bytes,
-        file_name="ecommatrix_financial_export.csv",
-        mime="text/csv"
-    )
