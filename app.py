@@ -1,14 +1,16 @@
+
 import streamlit as st
 import sqlite3
 import pandas as pd
-import plotly.express as px  # For handling the custom neon charts
+import plotly.express as px
+from datetime import datetime
 
 # ==============================================================================
-# 1. FRONTEND CONFIGURATION & VISUAL STYLING
+# 1. FRONTEND CONFIGURATION & VISUAL STYLING (HEALTH DASHBOARD CSS)
 # ==============================================================================
 st.set_page_config(page_title="EcomMatrix Pipeline", page_icon="📦", layout="wide")
 
-# Custom Dark Matrix Theme Styling
+# Custom Dark Matrix Theme + High Contrast Card Components Styling
 st.markdown("""
 <style>
     .main, .block-container { background-color: #0d1117 !important; }
@@ -16,11 +18,27 @@ st.markdown("""
     [data-testid="stSidebar"] * { color: #ffffff !important; }
     div[data-testid="stWidgetLabel"] p, label p { color: #ffffff !important; font-weight: 600 !important; }
     h1, h2, h3, h4, p, span, label { color: #ffffff !important; }
-    div[data-testid="stMetric"] {
-        background-color: #161b22 !important;
-        border: 1px solid #30363d !important;
-        padding: 15px;
+    
+    /* Sleek Custom Metric Presentation Boxes */
+    .metric-container {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        padding: 20px;
         border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }
+    .metric-title {
+        color: #8b949e !important;
+        font-size: 14px !important;
+        text-transform: uppercase;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .metric-value {
+        color: #ffffff !important;
+        font-size: 28px !important;
+        font-weight: 700;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -35,6 +53,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Core products schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +66,7 @@ def init_db():
         )
     ''')
     
+    # Standalone categories schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             category_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +74,7 @@ def init_db():
         )
     ''')
     
+    # Many-to-Many bridge table schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS product_category_map (
             product_id INTEGER,
@@ -64,6 +85,18 @@ def init_db():
         )
     ''')
     
+    # FEATURE 3 schema: Chronological Audit Trail Logs Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS system_logs (
+            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            user_node TEXT NOT NULL,
+            action_event TEXT NOT NULL,
+            details TEXT NOT NULL
+        )
+    ''')
+    
+    # Seed values dynamically if database is currently empty
     cursor.execute("SELECT COUNT(*) FROM products")
     if cursor.fetchone()[0] == 0:
         products_seed = [
@@ -87,7 +120,7 @@ def init_db():
 init_db()
 
 # ==============================================================================
-# 3. SECURITY AUTHENTICATION SYSTEM
+# 3. FEATURE 1: SECURE USER AUTHENTICATION LAYER
 # ==============================================================================
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -144,7 +177,7 @@ with st.sidebar:
     currency_rates = {"INR (₹)": (1.0, "₹"), "USD ($)": (0.012, "$"), "EUR (€)": (0.011, "€")}
     exchange_rate, currency_symbol = currency_rates[selected_currency]
 
-    # Add New Product Form
+    # FEATURE 2: Dynamic Add Product Form with Smart Markup Pricing
     st.markdown("---")
     st.markdown("### ➕ Add New SKU to Inventory")
     new_name = st.text_input("Product Name")
@@ -163,19 +196,39 @@ with st.sidebar:
     new_rating = st.slider("Product Rating", min_value=1.0, max_value=5.0, value=4.0)
     new_supplier = st.selectbox("Assign Supplier Partner", ["NexGen Electronics Ltd", "Alpha Supply Chain", "WearableTech Distributors", "Global Logistics Corp"])
     
+    # Category Assignment Sub-selection
+    conn = get_db_connection()
+    available_cats = pd.read_sql_query("SELECT * FROM categories", conn)
+    conn.close()
+    cat_mapping_opts = {row['category_id']: row['category_name'] for _, row in available_cats.iterrows()}
+    chosen_cat_id = st.selectbox("Assign Core Category Mapping", options=list(cat_mapping_opts.keys()), format_func=lambda x: cat_mapping_opts[x])
+
     if st.button("Save Product to Database"):
         if new_name.strip() == "":
             st.error("Product name cannot be empty!")
         else:
             conn = get_db_connection()
             cursor = conn.cursor()
+            
+            # Save product record
             cursor.execute(
                 "INSERT INTO products (name, price, cost_price, stock_level, popularity_score, supplier_name) VALUES (?, ?, ?, ?, ?, ?)",
                 (new_name, new_price, new_cost, new_stock, new_rating, new_supplier)
             )
+            generated_prod_id = cursor.lastrowid
+            
+            # Save many-to-many link map
+            cursor.execute("INSERT INTO product_category_map (product_id, category_id) VALUES (?, ?)", (generated_prod_id, chosen_cat_id))
+            
+            # Write transaction to FEATURE 3 Audit trail
+            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                "INSERT INTO system_logs (timestamp, user_node, action_event, details) VALUES (?, ?, ?, ?)",
+                (timestamp_str, "admin", "SKU_ADDITION", f"Added item '{new_name}' (ID: {generated_prod_id}) to mapping group '{cat_mapping_opts[chosen_cat_id]}'")
+            )
             conn.commit()
             conn.close()
-            st.success(f"Successfully added {new_name}!")
+            st.success(f"Successfully added {new_name} and logged transaction!")
             st.rerun()
 
     # Remove SKU Purge Form
@@ -192,11 +245,22 @@ with st.sidebar:
         if st.button("Execute Transactional Delete", type="primary"):
             conn = get_db_connection()
             cursor = conn.cursor()
+            
+            cursor.execute("SELECT name FROM products WHERE product_id = ?", (selected_delete_id,))
+            target_name = cursor.fetchone()[0]
+            
             cursor.execute("DELETE FROM product_category_map WHERE product_id = ?", (selected_delete_id,))
             cursor.execute("DELETE FROM products WHERE product_id = ?", (selected_delete_id,))
+            
+            # Write transaction to FEATURE 3 Audit trail
+            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                "INSERT INTO system_logs (timestamp, user_node, action_event, details) VALUES (?, ?, ?, ?)",
+                (timestamp_str, "admin", "SKU_PURGE", f"Deleted item '{target_name}' (ID: {selected_delete_id}) from database relational tables")
+            )
             conn.commit()
             conn.close()
-            st.success("Database records successfully purged!")
+            st.success("Database records successfully purged and logged!")
             st.rerun()
 
 # ==============================================================================
@@ -247,7 +311,7 @@ if not critical_alert_items.empty:
         st.error(f"🚨 **LOGISTICAL ALERT**: '{row['name']}' has fallen below warning ceiling! Current Stock: **{row['stock_level']} units**.")
 
 # ==============================================================================
-# 7. MAIN PRESENTATION LAYER (CHARTS, GRAPHS & DATA TABLES)
+# 7. FEATURE 4: VISUAL INVENTORY HEALTH DASHBOARD PRESENTATION LAYER
 # ==============================================================================
 if raw_inventory_df.empty:
     st.warning("⚠️ Zero SKU allocations match the targeted filters.")
@@ -256,19 +320,33 @@ else:
     total_projected_profit = ((raw_inventory_df['Display Price'] - raw_inventory_df['Display Cost']) * raw_inventory_df['stock_level']).sum()
     avg_stockout = raw_inventory_df['Days_to_Stockout'].mean()
     
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("Gross Pipeline Valuation (With Tax)", f"{currency_symbol}{total_valuation:,.2f}")
-    metric_col2.metric("Projected Operational Profit", f"{currency_symbol}{total_projected_profit:,.2f}")
-    metric_col3.metric("Avg Days to Stockout", f"{avg_stockout:.1f} Days")
+    # Custom Structured Grid Summary Cards
+    m_col1, m_col2, m_col3 = st.columns(3)
+    with m_col1:
+        st.markdown(f"""<div class='metric-container'>
+            <div class='metric-title'>Pipeline Asset Valuation</div>
+            <div class='metric-value'>{currency_symbol}{total_valuation:,.2f}</div>
+        </div>""", unsafe_allow_html=True)
+    with m_col2:
+        st.markdown(f"""<div class='metric-container'>
+            <div class='metric-title'>Projected Pipeline Profit</div>
+            <div class='metric-value'>{currency_symbol}{total_projected_profit:,.2f}</div>
+        </div>""", unsafe_allow_html=True)
+    with m_col3:
+        st.markdown(f"""<div class='metric-container'>
+            <div class='metric-title'>Average Pipeline Stockout</div>
+            <div class='metric-value'>{avg_stockout:.1f} Days</div>
+        </div>""", unsafe_allow_html=True)
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    tab1, tab2 = st.tabs(["📊 Inventory Products View", "🏭 Supplier Performance Analytics"])
+    # Tabbed Interface Layout
+    tab1, tab2, tab3 = st.tabs(["📊 Inventory Products View", "🏭 Supplier Performance Analytics", "📜 FEATURE 3: System Transaction Logs"])
     
     with tab1:
         st.markdown("#### 📈 Profit Margin Breakdown by Product SKU (%)")
         
-        # --- FEATURE SELECTION: VIBRANT NEON YELLOW BARS + WHITE BACKDROP ---
+        # High-Contrast White Layout with Neon Yellow Bars Chart
         fig_margin = px.bar(
             raw_inventory_df, 
             x='name', 
@@ -277,16 +355,15 @@ else:
         )
         fig_margin.update_traces(marker_color='#CCFF00', marker_line_color='#CCFF00')
         fig_margin.update_layout(
-            plot_bgcolor='#ffffff',   # Interior background to solid white
-            paper_bgcolor='#ffffff',  # Outer frame background to solid white
-            font_color='#000000',     # Flipped font labels to clear black for readability
+            plot_bgcolor='#ffffff',
+            paper_bgcolor='#ffffff',
+            font_color='#000000',
             xaxis={'categoryorder':'total descending'}
         )
         st.plotly_chart(fig_margin, use_container_width=True)
         
         st.markdown("#### 📄 Real-Time Inventory View Data Grid")
         display_df = raw_inventory_df[['product_id', 'name', 'Display Price', 'Display Cost', 'stock_level', 'Days_to_Stockout', 'Profit Margin (%)', 'associated_categories']]
-        
         st.dataframe(
             display_df.style.format({
                 'Display Price': f'{currency_symbol}' + '{:.2f}',
@@ -307,7 +384,6 @@ else:
         
         st.markdown("##### 📈 Supplier Share Contribution (By Asset Value)")
         
-        # --- FEATURE SELECTION: VIBRANT NEON YELLOW BARS + WHITE BACKDROP ---
         fig_supplier = px.bar(
             supplier_summary,
             x='supplier_name',
@@ -316,9 +392,9 @@ else:
         )
         fig_supplier.update_traces(marker_color='#CCFF00', marker_line_color='#CCFF00')
         fig_supplier.update_layout(
-            plot_bgcolor='#ffffff',   # Interior background to solid white
-            paper_bgcolor='#ffffff',  # Outer frame background to solid white
-            font_color='#000000',     # Flipped font labels to clear black for readability
+            plot_bgcolor='#ffffff',
+            paper_bgcolor='#ffffff',
+            font_color='#000000',
             xaxis={'categoryorder':'total descending'}
         )
         st.plotly_chart(fig_supplier, use_container_width=True)
@@ -328,10 +404,23 @@ else:
             use_container_width=True
         )
 
+    # --- FEATURE 3 DISPLAY: DATA AUDITING RENDER TAB ---
+    with tab3:
+        st.markdown("#### 📜 Relational Core Administration Event Logs")
+        log_conn = get_db_connection()
+        logs_df = pd.read_sql_query("SELECT log_id AS 'Log ID', timestamp AS 'Timestamp', action_event AS 'Event Type', details AS 'Operation Details' FROM system_logs ORDER BY log_id DESC", log_conn)
+        log_conn.close()
+        
+        if logs_df.empty:
+            st.info("No management transactions recorded in audit database during current initialization sequence.")
+        else:
+            st.dataframe(logs_df, use_container_width=True, hide_index=True)
+
 # ==============================================================================
 # 8. AUTOMATED PROCUREMENT REORDER ENGINE
 # ==============================================================================
     st.markdown("---")
+    st.sidebar.markdown("---")
     st.markdown("### 🤖 Automated Procurement Reorder Engine")
     
     if not critical_alert_items.empty:
